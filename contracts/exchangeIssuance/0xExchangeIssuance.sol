@@ -17,18 +17,20 @@
 pragma solidity 0.6.10;
 pragma experimental ABIEncoderV2;
 
+/* ============ Libraries ============= */
 import { Address } from "@openzeppelin/contracts/utils/Address.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/math/Math.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import { SafeMath } from "@openzeppelin/contracts/math/SafeMath.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { PreciseUnitMath } from "../lib/PreciseUnitMath.sol";
+
+/* ============ Interfaces ============= */
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { IBasicIssuanceModule } from "../interfaces/IBasicIssuanceModule.sol";
 import { IController } from "../interfaces/IController.sol";
 import { ISetToken } from "../interfaces/ISetToken.sol";
-import { IWETH } from "../interfaces/IWETH.sol";
-import { PreciseUnitMath } from "../lib/PreciseUnitMath.sol";
 
 /**
  * @title ExchangeIssuance
@@ -57,6 +59,12 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
 
     IController public immutable setController;
     IBasicIssuanceModule public immutable basicIssuanceModule;
+
+    /* ============ Structs ============ */
+    struct ApprovalData {
+      address token,
+      uint256 amount
+    }
 
     /* ============ Events ============ */
 
@@ -146,6 +154,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
      * @param _exchanges        Exchanges to buy component tokens from. Provided by 0x API 
      * @param _exchangeData     Transaction data for each exchange. Provided by 0x API
      * @param _ethCallValues        Amount of ETH to be sent as with token swaps. Provided by 0x API
+     * @param _approvals            Tokens to approve on to each exchange. Derived from set components
      *
      * @return setTokenAmount   Amount of SetTokens issued to the caller
      */
@@ -156,7 +165,8 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         uint256 _minSetReceive,
         address[] _exchanges,
         bytes[] _exchangeData,
-        uint256[] _ethCallValues
+        uint256[] _ethCallValues,
+        ApprovalData[] approvals
     )
         isSetToken(_setToken)
         external
@@ -168,6 +178,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
 
         _inputToken.safeTransferFrom(msg.sender, address(this), _amountInput);
         for(uint256 i; i < _exchanges.length; i++) {
+          _safeApprove(approvals[i].token,_exchanges[i], approvals[i].amount); 
           _exchanges[i].call{value: _ethCallValues[i]}(_exchangeData[i]); 
         }
 
@@ -188,6 +199,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
      * @param _exchanges            Exchanges to buy component tokens from. Provided by 0x API 
      * @param _exchangeData         Transaction data for each exchange. Provided by 0x API
      * @param _ethCallValues        Amount of ETH to be sent as with token swaps. Provided by 0x API
+     * @param _approvals            Tokens to approve on to each exchange. Derived from set components
      *
      * @return outputAmount         Amount of output tokens sent to the caller
      */
@@ -198,7 +210,8 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         uint256 _minOutputReceive,
         address[] _exchanges,
         bytes[] _exchangeData,
-        uint256[] _ethCallValues
+        uint256[] _ethCallValues,
+        ApprovalData[] approvals
     )
         isSetToken(_setToken)
         external
@@ -213,6 +226,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         _redeemExactSet(_setToken, _amountSetToken);
         
         for(uint256 i; i < _exchanges.length; i++) {
+          _safeApprove(approvals[i].token,_exchanges[i], approvals[i].amount); 
           _exchanges[i].call{value: _ethCallValues[i]}(_exchangeData[i]); 
         }
 
