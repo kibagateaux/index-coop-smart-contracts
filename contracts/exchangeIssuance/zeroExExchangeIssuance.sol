@@ -170,6 +170,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     )
         isSetToken(_setToken)
         external
+        payable
         nonReentrant
         returns (uint256)
     {
@@ -258,6 +259,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     )
         isSetToken(_setToken)
         external
+        payable
         nonReentrant
         returns (uint256)
     {
@@ -311,6 +313,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     )
         isSetToken(_setToken)
         external
+        payable
         nonReentrant
         returns (uint256)
     {
