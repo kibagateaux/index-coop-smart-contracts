@@ -12,8 +12,6 @@
     SPDX-License-Identifier: Apache License, Version 2.0
 */
 
-// https://0x.org/docs/guides/use-0x-api-liquidity-in-your-smart-contracts#the-swap-contract
-
 pragma solidity 0.6.10;
 pragma experimental ABIEncoderV2;
 
@@ -40,7 +38,7 @@ import { ISetToken } from "../interfaces/ISetToken.sol";
  * All swaps are done using the best price found on Uniswap or Sushiswap.
  *
  */
-contract ExchangeIssuanceV2 is ReentrancyGuard {
+contract ZeroExExchangeIssuance is ReentrancyGuard {
 
     using Address for address payable;
     using SafeMath for uint256;
@@ -51,19 +49,19 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     /* ============ Constants ============= */
 
     uint256 constant private MAX_UINT96 = 2**96 - 1;
-    address constant public ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
-    address constant public INDEX_COOP_TREASURY = 0xdead; // FEEDBACK: get appropriate address
+    address constant public ETH_ADDRESS = address(0);
+    address public treasury; // FEEDBACK: get appropriate address
 
     /* ============ State Variables ============ */
-    uint256 ethBalance = 0;
-
     IController public immutable setController;
     IBasicIssuanceModule public immutable basicIssuanceModule;
 
     /* ============ Structs ============ */
-    struct ApprovalData {
-      address token,
-      uint256 amount
+    struct ZeroExOrder {
+      address payable exchange;
+      bytes tradeData;
+      uint256 callValue;
+      IERC20 componentTraded;
     }
 
     /* ============ Events ============ */
@@ -99,12 +97,13 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     /* ============ Constructor ============ */
 
     constructor(
-        address _weth,
+        address _treasury,
         IController _setController,
         IBasicIssuanceModule _basicIssuanceModule
     )
         public
     {
+        treasury = _treasury;
         setController = _setController;
         basicIssuanceModule = _basicIssuanceModule;
     }
@@ -146,15 +145,13 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     /**
      * Issues SetTokens for an exact amount of input ERC20 tokens.
      * The ERC20 token must be approved by the sender to this contract.
+     * If ERC20 address = 0x0 treat as raw ETH
      *
      * @param _setToken         Address of the SetToken being issued
      * @param _inputToken       Address of input token
      * @param _amountInput      Amount of the input token / ether to spend
      * @param _minSetReceive    Minimum amount of SetTokens to receive. Prevents unnecessary slippage.
-     * @param _exchanges        Exchanges to buy component tokens from. Provided by 0x API 
-     * @param _exchangeData     Transaction data for each exchange. Provided by 0x API
-     * @param _ethCallValues        Amount of ETH to be sent as with token swaps. Provided by 0x API
-     * @param _approvals            Tokens to approve on to each exchange. Derived from set components
+     * @param _orders           Order data for each component. Provided by 0x API 
      *
      * @return setTokenAmount   Amount of SetTokens issued to the caller
      */
@@ -163,10 +160,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         IERC20 _inputToken,
         uint256 _amountInput,
         uint256 _minSetReceive,
-        address[] _exchanges,
-        bytes[] _exchangeData,
-        uint256[] _ethCallValues,
-        ApprovalData[] approvals
+        ZeroExOrder[] memory _orders
     )
         isSetToken(_setToken)
         external
@@ -175,75 +169,39 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         returns (uint256)
     {
         require(_amountInput > 0, "ExchangeIssuance: INVALID INPUTS");
-        require(
-          _exchanges.length == _exchangeData.length == _ethCallValues.length,
-          "ExchangeIssuance: INVALID AGGREGATOR DATA"
-        );
 
-        _inputToken.safeTransferFrom(msg.sender, address(this), _amountInput);
+        require(_orders.length == _setToken.getComponents().length, "ExchangeIssuance: INVALID ORDERS");
 
-        for(uint256 i; i < _exchanges.length; i++) {
-          _safeApprove(approvals[i].token, _exchanges[i], approvals[i].amount); 
-          _exchanges[i].call{value: _ethCallValues[i]}(_exchangeData[i]); 
+        bool isETH = address(_inputToken) == ETH_ADDRESS;
+        if(isETH) {
+          require(msg.value >= _amountInput,  "ExchangeIssuance: INSUFFICIENT_INPUT_AMOUNT");
+        } else {
+          _inputToken.safeTransferFrom(msg.sender, address(this), _amountInput);
         }
 
-        uint256 setTokenAmount = basicIssuanceModule.issue(_setToken, setIssueAmount, msg.sender);
-        require(setTokenAmount >= _minSetReceive, "INSUFFICIENT_OUTPUT_AMOUNT");
+        for(uint256 i; i < _orders.length; i++) {
+          ZeroExOrder memory order = _orders[i];
 
-        emit ExchangeIssue(msg.sender, _setToken, _inputToken, _amountInput, setTokenAmount);
-        return setTokenAmount;
-    }
-
-    /**
-     * Issues SetTokens for an exact amount of input ether.
-     *
-     * @param _setToken         Address of the SetToken to be issued
-     * @param _minSetReceive    Minimum amount of SetTokens to receive. Prevents unnecessary slippage.
-     *
-     * @return setTokenAmount   Amount of SetTokens issued to the caller
-     */
-    function issueSetForExactETH(
-        ISetToken _setToken,
-        uint256 _minSetReceive,
-        address[] _exchanges,
-        bytes[] _exchangeData,
-        uint256[] _ethCallValues,
-    )
-        isSetToken(_setToken)
-        external
-        payable
-        nonReentrant
-        returns(uint256)
-    {
-        require(msg.value > 0, "ExchangeIssuance: INVALID INPUTS");
-        require(
-          _exchanges.length == _exchangeData.length == _ethCallValues.length,
-          "ExchangeIssuance: INVALID AGGREGATOR DATA"
-        );
-
-        for(uint256 i; i < _exchanges.length; i++) {
-          _exchanges[i].call{value: _ethCallValues[i]}(_exchangeData[i]); 
+          _safeApprove(_inputToken, order.exchange, MAX_UINT96); 
+          order.exchange.functionCallWithValue(order.tradeData, order.callValue);
         }
 
-        uint256 setTokenAmount = basicIssuanceModule.issue(_setToken, setIssueAmount, msg.sender);
-        require(setTokenAmount >= _minSetReceive, "INSUFFICIENT_OUTPUT_AMOUNT");
+        // FEEDBACK: can calculate max Set issuance amount or can give min and keep tokens for ourselves
+        basicIssuanceModule.issue(_setToken, _minSetReceive, msg.sender);
 
-        emit ExchangeIssue(msg.sender, _setToken, IERC20(ETH_ADDRESS), msg.value, setTokenAmount);
-        return setTokenAmount;
+        emit ExchangeIssue(msg.sender, _setToken, _inputToken, _amountInput, _minSetReceive);
+        return _minSetReceive;
     }
 
     /**
      * Redeems an exact amount of SetTokens for an ERC20 token.
      * The SetToken must be approved by the sender to this contract.
-     *
+     * If ERC20 address = 0x0 treat as raw ETH
      * @param _setToken             Address of the SetToken being redeemed
      * @param _outputToken          Address of output token
      * @param _amountSetToken       Amount SetTokens to redeem
      * @param _minOutputReceive     Minimum amount of output token to receive
-     * @param _exchanges            Exchanges to buy component tokens from. Provided by 0x API 
-     * @param _exchangeData         Transaction data for each exchange. Provided by 0x API
-     * @param _ethCallValues        Amount of ETH to be sent as with token swaps. Provided by 0x API
-     * @param _approvals            Tokens to approve on to each exchange. Derived from set components
+     * @param _orders               Order data for each component. Provided by 0x API 
      *
      * @return outputAmount         Amount of output tokens sent to the caller
      */
@@ -252,10 +210,7 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         IERC20 _outputToken,
         uint256 _amountSetToken,
         uint256 _minOutputReceive,
-        address[] _exchanges,
-        bytes[] _exchangeData,
-        uint256[] _ethCallValues,
-        ApprovalData[] approvals
+        ZeroExOrder[] memory _orders
     )
         isSetToken(_setToken)
         external
@@ -264,77 +219,38 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
         returns (uint256)
     {
         require(_amountSetToken > 0, "ExchangeIssuance: INVALID INPUTS");
-        require(
-          _exchanges.length == _exchangeData.length == _ethCallValues.length,
-          "ExchangeIssuance: INVALID AGGREGATOR DATA"
-        );
+        require(_orders.length == _setToken.getComponents().length, "ExchangeIssuance: INVALID ORDERS");
 
-        uint256 existingOutputBalance = _outputToken.balanceOf(address(this));
+        bool isETH = address(_outputToken) == ETH_ADDRESS;
+        uint256 existingOutputBalance = isETH ?
+          address(this).balance.sub(msg.value) :
+          _outputToken.balanceOf(address(this));
         
         _redeemExactSet(_setToken, _amountSetToken);
         
-        for(uint256 i; i < _exchanges.length; i++) {
-          _safeApprove(approvals[i].token, _exchanges[i], approvals[i].amount); 
-          _exchanges[i].call{value: _ethCallValues[i]}(_exchangeData[i]); 
+        for(uint256 i; i < _orders.length; i++) {
+          ZeroExOrder memory order = _orders[i];
+          _safeApprove(order.componentTraded, order.exchange, MAX_UINT96);
+          order.exchange.functionCallWithValue(order.tradeData, order.callValue);
         }
 
-        uint256 outputAmount = _outputToken.balanceOf(address(this)).sub(existingOutputBalance);
+        uint256 outputAmount = isETH ?
+          address(this).balance.sub(existingOutputBalance) :
+          _outputToken.balanceOf(address(this)).sub(existingOutputBalance);
 
-        require(outputAmount >= _minOutputReceive, "INSUFFICIENT_OUTPUT_AMOUNT");
-        _outputToken.safeTransfer(msg.sender, outputAmount);
+        require(outputAmount >= _minOutputReceive, "ExchangeIssuance: INSUFFICIENT_OUTPUT_AMOUNT");
 
-        emit ExchangeRedeem(msg.sender, _setToken, _outputToken, _amountSetToken, outputAmount);
-        return outputAmount;
-    }
-
-    /**
-     * Redeems an exact amount of SetTokens for ETH.
-     * The SetToken must be approved by the sender to this contract.
-     *
-     * @param _setToken             Address of the SetToken to be redeemed
-     * @param _amountSetToken       Amount of SetTokens to redeem
-     * @param _minEthOut            Minimum amount of ETH to receive
-     * @param _exchanges            Exchanges to buy component tokens from. Provided by 0x API 
-     * @param _exchangeData         Transaction data for each exchange. Provided by 0x API
-     * @param _ethCallValues        Amount of ETH to be sent as with token swaps. Provided by 0x API
-     * @param _approvals            Tokens to approve on to each exchange. Derived from set components
-     *
-     * @return amountEthOut         Amount of ether sent to the caller
-     */
-    function redeemExactSetForETH(
-        ISetToken _setToken,
-        uint256 _amountSetToken,
-        uint256 _minEthOut,
-        address[] _exchanges,
-        bytes[] _exchangeData,
-        uint256[] _ethCallValues,
-        ApprovalData[] _approvals
-        
-    )
-        isSetToken(_setToken)
-        external
-        payable
-        nonReentrant
-        returns (uint256)
-    {
-        require(_amountSetToken > 0, "ExchangeIssuance: INVALID INPUTS");
-        require(
-          _exchanges.length == _exchangeData.length == _ethCallValues.length,
-          "ExchangeIssuance: INVALID AGGREGATOR DATA"
-        );
-
-        _redeemExactSet(_setToken, _amountSetToken);
-        
-        for(uint256 i; i < _exchanges.length; i++) {
-          _safeApprove(approvals[i].token, _exchanges[i], approvals[i].amount); 
-          _exchanges[i].call{value: _ethCallValues[i]}(_exchangeData[i]); 
+        // keep outputAmount.sub(_minOutputReceive) as positive slippage profit for coop
+        if(isETH) {
+          (payable(msg.sender)).sendValue(_minOutputReceive);
+        } else {
+          _outputToken.safeTransfer(msg.sender, _minOutputReceive);
         }
 
-        (payable(msg.sender)).sendValue(_minEthOut);
-
-        emit ExchangeRedeem(msg.sender, _setToken, IERC20(ETH_ADDRESS), _amountSetToken, _minEthOut);
-        return _minEthOut;
+        emit ExchangeRedeem(msg.sender, _setToken, _outputToken, _amountSetToken, _minOutputReceive);
+        return _minOutputReceive;
     }
+
 
     /**
     * Sends tokens held in contract from positive slippage trades to Index Coop treasury
@@ -343,9 +259,9 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     *
     * @return amount         Amount of tokens withdrawn
     */
-    function withdrawExcessTokens(address _token) external (returns uint256) {
-      uint256 amount = IERC20(_token).balanceOf(address(this));
-      IERC20(_token).safeTransfer(INDEX_COOP_TREASURY, amount);
+    function withdrawExcessTokens(IERC20 _token) external returns (uint256) {
+      uint256 amount = _token.balanceOf(address(this));
+      _token.safeTransfer(treasury, amount);
       return amount;
     }
 
@@ -354,10 +270,21 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
     *
     * @return amount         Amount of tokens withdrawn
     */
-    function withdrawExcessEth() external (returns uint256) {
+    function withdrawExcessEth() external returns (uint256) {
       uint256 amount = address(this).balance;
-      (payable(INDEX_COOP_TREASURY)).sendValue(amount);
+      (payable(treasury)).sendValue(amount);
       return amount;
+    }
+
+  /**
+    * Updates the address that excess tokens get sent to
+    *
+    * @return _treasury         New address to send all tokens to
+    */
+    function updateTreasury(address _treasury) external returns (bool) {
+      require(treasury == msg.sender, "ExchangeIssuance: INVALID TREAUSURER");
+      treasury = _treasury;
+      return true;
     }
 
     /* ============ Internal Functions ============ */
@@ -370,10 +297,12 @@ contract ExchangeIssuanceV2 is ReentrancyGuard {
      * @param _spender  Spender address to approve
      */
     function _safeApprove(IERC20 _token, address _spender, uint256 _requiredAllowance) internal {
+      if(address(_token) != address(0)) {
         uint256 allowance = _token.allowance(address(this), _spender);
         if (allowance < _requiredAllowance) {
             _token.safeIncreaseAllowance(_spender, MAX_UINT96 - allowance);
         }
+      }
     }
 
     /**
