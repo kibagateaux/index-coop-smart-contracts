@@ -3,6 +3,7 @@ import { Address, ContractSettings, MethodologySettings, ExecutionSettings, Ince
 import {
   ExchangeIssuance,
   ExchangeIssuanceV2,
+  ZeroExExchangeIssuance,
   FlexibleLeverageStrategyExtension,
   FeeSplitExtension,
   GIMExtension,
@@ -12,6 +13,7 @@ import {
 
 import { ExchangeIssuance__factory } from "../../typechain/factories/ExchangeIssuance__factory";
 import { ExchangeIssuanceV2__factory } from "../../typechain/factories/ExchangeIssuanceV2__factory";
+import { ZeroExExchangeIssuance__factory } from "../../typechain/factories/ZeroExExchangeIssuance__factory";
 import { FeeSplitExtension__factory } from "../../typechain/factories/FeeSplitExtension__factory";
 import { FlexibleLeverageStrategyExtension__factory } from "../../typechain/factories/FlexibleLeverageStrategyExtension__factory";
 import { GIMExtension__factory } from "../../typechain/factories/GIMExtension__factory";
@@ -134,4 +136,17 @@ export default class DeployExtensions {
       basicIssuanceModuleAddress
     );
   }
+
+  public async deployZeroExExchangeIssuance(
+    treasury: Address,
+    setControllerAddress: Address,
+    basicIssuanceModuleAddress: Address,
+  ): Promise<ZeroExExchangeIssuance> {
+    return await new ZeroExExchangeIssuance__factory(this._deployerSigner).deploy(
+      treasury,
+      setControllerAddress,
+      basicIssuanceModuleAddress
+    );
+  }
 }
+

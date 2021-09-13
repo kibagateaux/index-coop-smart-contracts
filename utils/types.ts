@@ -75,3 +75,10 @@ export interface IncentiveSettings {
   etherReward: BigNumber;
   incentivizedLeverageRatio: BigNumber;
 }
+
+export interface ZeroExOrder {
+  exchange: Address;
+  tradeData: string;
+  callValue: BigNumber;
+  componentTraded: Address;
+}

@@ -58,10 +58,10 @@ contract ZeroExExchangeIssuance is ReentrancyGuard {
 
     /* ============ Structs ============ */
     struct ZeroExOrder {
+      IERC20 componentTraded;
       address payable exchange;
       bytes tradeData;
       uint256 callValue;
-      IERC20 componentTraded;
     }
 
     /* ============ Events ============ */
@@ -119,6 +119,17 @@ contract ZeroExExchangeIssuance is ReentrancyGuard {
      */
     function approveToken(IERC20 _token) public {
         _safeApprove(_token, address(basicIssuanceModule), MAX_UINT96);
+    }
+
+    /**
+     * Runs all the necessary approval functions required for a list of ERC20 tokens.
+     *
+     * @param _tokens    Addresses of the tokens which need approval
+     */
+    function approveTokens(IERC20[] calldata _tokens) external {
+        for (uint256 i = 0; i < _tokens.length; i++) {
+            approveToken(_tokens[i]);
+        }
     }
 
     /**
