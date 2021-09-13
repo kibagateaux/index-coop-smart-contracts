@@ -309,6 +309,7 @@ describe("ExchangeIssuanceV2", async () => {
         await subject();
 
         const finalAllowances = await getAllowances(tokens, exchangeIssuance.address, spenders);
+        expect(finalAllowances.length).to.eq(tokens.length);
 
         for (let i = 0; i < finalAllowances.length; i++) {
           const actualAllowance = finalAllowances[i];
@@ -335,6 +336,7 @@ describe("ExchangeIssuanceV2", async () => {
         await subject();
 
         const finalAllowances = await getAllowances(subjectTokensToApprove, exchangeIssuance.address, spenders);
+        expect(finalAllowances.length).to.eq(subjectTokensToApprove.length);
 
         for (let i = 0; i < finalAllowances.length; i++) {
           const actualAllowance = finalAllowances[i];
